@@ -51,30 +51,33 @@ public sealed class OrdersMessageWorker(
         await using var publisher = await connection.CreateChannelAsync(
             new CreateChannelOptions(publisherConfirmationsEnabled: true, publisherConfirmationTrackingEnabled: true),
             ct);
-        await using var consumerChannel = await connection.CreateChannelAsync(cancellationToken: ct);
+        await using var capturedChannel = await connection.CreateChannelAsync(cancellationToken: ct);
+        await using var failedChannel = await connection.CreateChannelAsync(cancellationToken: ct);
 
         await publisher.ExchangeDeclareAsync("orders", ExchangeType.Topic, durable: true, autoDelete: false, cancellationToken: ct);
-        await consumerChannel.ExchangeDeclareAsync("payments", ExchangeType.Topic, durable: true, autoDelete: false, cancellationToken: ct);
-        await consumerChannel.ExchangeDeclareAsync("orders.dead", ExchangeType.Topic, durable: true, autoDelete: false, cancellationToken: ct);
-        await consumerChannel.QueueDeclareAsync("orders-service.dead", durable: true, exclusive: false, autoDelete: false, cancellationToken: ct);
-        await consumerChannel.QueueBindAsync("orders-service.dead", "orders.dead", "#", cancellationToken: ct);
+        await capturedChannel.ExchangeDeclareAsync("payments", ExchangeType.Topic, durable: true, autoDelete: false, cancellationToken: ct);
+        await capturedChannel.ExchangeDeclareAsync("orders.dead", ExchangeType.Topic, durable: true, autoDelete: false, cancellationToken: ct);
+        await capturedChannel.QueueDeclareAsync("orders-service.dead", durable: true, exclusive: false, autoDelete: false, cancellationToken: ct);
+        await capturedChannel.QueueBindAsync("orders-service.dead", "orders.dead", "#", cancellationToken: ct);
 
         var dlxArgs = new Dictionary<string, object?> { ["x-dead-letter-exchange"] = "orders.dead" };
-        await consumerChannel.QueueDeclareAsync(PaymentCapturedQueue, durable: true, exclusive: false, autoDelete: false, arguments: dlxArgs, cancellationToken: ct);
-        await consumerChannel.QueueBindAsync(PaymentCapturedQueue, "payments", "payment_captured", cancellationToken: ct);
-        await consumerChannel.QueueDeclareAsync(PaymentFailedQueue, durable: true, exclusive: false, autoDelete: false, arguments: dlxArgs, cancellationToken: ct);
-        await consumerChannel.QueueBindAsync(PaymentFailedQueue, "payments", "payment_failed", cancellationToken: ct);
-        await consumerChannel.BasicQosAsync(0, 1, global: false, ct);
+        await capturedChannel.QueueDeclareAsync(PaymentCapturedQueue, durable: true, exclusive: false, autoDelete: false, arguments: dlxArgs, cancellationToken: ct);
+        await capturedChannel.QueueBindAsync(PaymentCapturedQueue, "payments", "payment_captured", cancellationToken: ct);
+        await capturedChannel.BasicQosAsync(0, 1, global: false, ct);
 
-        var capturedConsumer = new AsyncEventingBasicConsumer(consumerChannel);
+        await failedChannel.QueueDeclareAsync(PaymentFailedQueue, durable: true, exclusive: false, autoDelete: false, arguments: dlxArgs, cancellationToken: ct);
+        await failedChannel.QueueBindAsync(PaymentFailedQueue, "payments", "payment_failed", cancellationToken: ct);
+        await failedChannel.BasicQosAsync(0, 1, global: false, ct);
+
+        var capturedConsumer = new AsyncEventingBasicConsumer(capturedChannel);
         capturedConsumer.ReceivedAsync += (_, args) => ProcessAsync<PaymentCaptured>(
-            args, consumerChannel, (svc, evt, token) => svc.ApplyPaymentCapturedAsync(evt, token), ct);
-        await consumerChannel.BasicConsumeAsync(PaymentCapturedQueue, autoAck: false, capturedConsumer, ct);
+            args, capturedChannel, (svc, evt, token) => svc.ApplyPaymentCapturedAsync(evt, token), ct);
+        await capturedChannel.BasicConsumeAsync(PaymentCapturedQueue, autoAck: false, capturedConsumer, ct);
 
-        var failedConsumer = new AsyncEventingBasicConsumer(consumerChannel);
+        var failedConsumer = new AsyncEventingBasicConsumer(failedChannel);
         failedConsumer.ReceivedAsync += (_, args) => ProcessAsync<PaymentFailed>(
-            args, consumerChannel, (svc, evt, token) => svc.ApplyPaymentFailedAsync(evt, token), ct);
-        await consumerChannel.BasicConsumeAsync(PaymentFailedQueue, autoAck: false, failedConsumer, ct);
+            args, failedChannel, (svc, evt, token) => svc.ApplyPaymentFailedAsync(evt, token), ct);
+        await failedChannel.BasicConsumeAsync(PaymentFailedQueue, autoAck: false, failedConsumer, ct);
 
         while (!ct.IsCancellationRequested)
         {
