@@ -20,7 +20,7 @@ COPY Davids.Services.Orders/src/ ./Davids.Services.Orders/src/
 RUN dotnet publish ./Davids.Services.Orders/src/Davids.Services.Orders.Api/Davids.Services.Orders.Api.csproj \
       --no-restore -c Release /p:UseAppHost=false
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled-extra AS runtime
 WORKDIR /app
 ENV ASPNETCORE_HTTP_PORTS=8080 \
     DOTNET_EnableDiagnostics=0
