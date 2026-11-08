@@ -184,8 +184,8 @@ public sealed class OrdersService(
         o.CardLast4,
         o.PaymentReference,
         o.FailureReason,
-        o.CreatedAt,
-        o.CompletedAt);
+        DateTime.SpecifyKind(o.CreatedAt, DateTimeKind.Utc),
+        o.CompletedAt.HasValue ? DateTime.SpecifyKind(o.CompletedAt.Value, DateTimeKind.Utc) : null);
 
     private static OrderDetailsDto MapDetails(Order o) => new(
         o.Id,
@@ -201,9 +201,9 @@ public sealed class OrdersService(
         o.PaymentId,
         o.PaymentReference,
         o.FailureReason,
-        o.CreatedAt,
-        o.UpdatedAt,
-        o.CompletedAt,
+        DateTime.SpecifyKind(o.CreatedAt, DateTimeKind.Utc),
+        DateTime.SpecifyKind(o.UpdatedAt, DateTimeKind.Utc),
+        o.CompletedAt.HasValue ? DateTime.SpecifyKind(o.CompletedAt.Value, DateTimeKind.Utc) : null,
         o.Items.Select(i => new OrderItemDto(i.ProductId, i.Sku, i.ProductName, i.UnitPrice, i.Currency, i.Quantity, i.LineTotal)).ToArray());
 
     private static string FormatStatus(OrderStatus status) => status switch

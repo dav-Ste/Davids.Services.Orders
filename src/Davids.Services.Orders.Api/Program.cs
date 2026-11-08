@@ -3,6 +3,7 @@ using Davids.ServiceDefaults;
 using Davids.Services.Orders.Api;
 using Davids.Services.Orders.Api.Exceptions;
 using Davids.Services.Orders.Application.Commands;
+using Davids.Services.Orders.Application.DTO;
 using Davids.Services.Orders.Application.Services;
 using Davids.Services.Orders.Infrastructure;
 using Davids.Services.Orders.Infrastructure.Auth;
@@ -185,6 +186,11 @@ app.MapGet("/", () => Results.Text("Davids Orders Service"))
 
 app.MapPost("/orders/checkout", async (CheckoutOrder command, ClaimsPrincipal user, HttpContext ctx, IOrdersService service, CancellationToken ct) =>
     {
+        if (command is null)
+        {
+            return Results.BadRequest(new { code = "invalid_request", reason = "Checkout request body is required." });
+        }
+
         if (!TryGetCustomerId(user, out var customerId))
         {
             return Results.Unauthorized();
@@ -195,10 +201,18 @@ app.MapPost("/orders/checkout", async (CheckoutOrder command, ClaimsPrincipal us
         var created = await service.CheckoutAsync(customerId, email, rawToken, command, ct);
         return Results.Created($"/orders/me/{created.Id}", created);
     })
+    .Produces<OrderDetailsDto>(StatusCodes.Status201Created)
+    .Produces(StatusCodes.Status400BadRequest)
+    .Produces(StatusCodes.Status409Conflict)
     .RequireAuthorization("CustomerOnly");
 
 app.MapGet("/orders/me", async (int? limit, ClaimsPrincipal user, IOrdersService service, CancellationToken ct) =>
     {
+        if (limit is <= 0 or > 200)
+        {
+            return Results.BadRequest(new { code = "invalid_query", reason = "Limit must be between 1 and 200." });
+        }
+
         if (!TryGetCustomerId(user, out var customerId))
         {
             return Results.Unauthorized();
@@ -206,6 +220,8 @@ app.MapGet("/orders/me", async (int? limit, ClaimsPrincipal user, IOrdersService
 
         return Results.Ok(await service.GetCustomerOrdersAsync(customerId, limit ?? 50, ct));
     })
+    .Produces<IReadOnlyList<OrderSummaryDto>>(StatusCodes.Status200OK)
+    .Produces(StatusCodes.Status400BadRequest)
     .RequireAuthorization("CustomerOnly");
 
 app.MapGet("/orders/me/{orderId:guid}", async (Guid orderId, ClaimsPrincipal user, IOrdersService service, CancellationToken ct) =>
@@ -218,6 +234,9 @@ app.MapGet("/orders/me/{orderId:guid}", async (Guid orderId, ClaimsPrincipal use
         var order = await service.GetCustomerOrderAsync(customerId, orderId, ct);
         return order is null ? Results.NotFound() : Results.Ok(order);
     })
+    .Produces<OrderDetailsDto>(StatusCodes.Status200OK)
+    .Produces(StatusCodes.Status400BadRequest)
+    .Produces(StatusCodes.Status404NotFound)
     .RequireAuthorization("CustomerOnly");
 
 app.MapPost("/orders/me/{orderId:guid}/cancel", async (Guid orderId, ClaimsPrincipal user, IOrdersService service, CancellationToken ct) =>
@@ -229,12 +248,25 @@ app.MapPost("/orders/me/{orderId:guid}/cancel", async (Guid orderId, ClaimsPrinc
 
         return Results.Ok(await service.CancelCustomerOrderAsync(customerId, orderId, ct));
     })
+    .Produces<OrderDetailsDto>(StatusCodes.Status200OK)
+    .Produces(StatusCodes.Status400BadRequest)
+    .Produces(StatusCodes.Status404NotFound)
+    .Produces(StatusCodes.Status409Conflict)
     .RequireAuthorization("CustomerOnly");
 
 app.MapGet("/orders", async (string? search, string? status, Guid? customerId, int? limit, IOrdersService service, CancellationToken ct) =>
     {
+        if ((search is not null && (search.Length > 100 || search.Contains('\0'))) ||
+            (status is not null && (status.Length > 40 || status.Contains('\0'))) ||
+            limit is <= 0 or > 500)
+        {
+            return Results.BadRequest(new { code = "invalid_query", reason = "Query parameters must be within bounds without control bytes." });
+        }
+
         return Results.Ok(await service.SearchWorkforceAsync(search, status, customerId, limit ?? 100, ct));
     })
+    .Produces<IReadOnlyList<OrderSummaryDto>>(StatusCodes.Status200OK)
+    .Produces(StatusCodes.Status400BadRequest)
     .RequireAuthorization("WorkforceRead");
 
 app.MapGet("/orders/{orderId:guid}", async (Guid orderId, IOrdersService service, CancellationToken ct) =>
@@ -242,6 +274,9 @@ app.MapGet("/orders/{orderId:guid}", async (Guid orderId, IOrdersService service
         var order = await service.GetWorkforceOrderAsync(orderId, ct);
         return order is null ? Results.NotFound() : Results.Ok(order);
     })
+    .Produces<OrderDetailsDto>(StatusCodes.Status200OK)
+    .Produces(StatusCodes.Status400BadRequest)
+    .Produces(StatusCodes.Status404NotFound)
     .RequireAuthorization("WorkforceRead");
 
 app.Run();
